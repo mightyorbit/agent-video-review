@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Video Review</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;background:#11131a;color:#f4f5f7}
+*{box-sizing:border-box}body{max-width:1200px;margin:auto;padding:22px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+h1{font-size:1.6rem;margin:0 0 16px}h2{font-size:1.1rem}
+main{display:grid;grid-template-columns:minmax(0,2fr) minmax(285px,1fr);gap:24px}
+video{width:100%;background:#000;border-radius:10px;max-height:70vh}
+button,input,select,textarea{font:inherit}button,select{background:#252a35;color:#fff;border:1px solid #454b5b;border-radius:7px;padding:7px 10px}
+button{cursor:pointer}button:hover{background:#384252}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #85b6ff}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+fieldset{border:1px solid #454b5b;border-radius:9px;margin:16px 0;padding:12px}
+label{display:block;margin-bottom:7px}textarea{width:100%;min-height:75px;background:#1b2029;color:#fff;border:1px solid #454b5b;border-radius:6px;padding:8px}
+.comment{border-top:1px solid #454b5b;padding:12px 0}.comment p{margin:7px 0}.muted{color:#afb7c8;font-size:.9rem}
+time{font-variant-numeric:tabular-nums}#error{color:#ffacac}
+@media(max-width:760px){main{display:block}body{padding:14px}header{display:block}}
+</style>
+<header><h1 id="title">Video review</h1><div class="muted">Local review</div></header>
+<main>
+<section>
+  <video id="video" controls preload="metadata" aria-label="Review video"></video>
+  <div class="controls">
+    <label for="version">Version</label><select id="version"></select>
+    <button id="back" type="button" aria-label="Back one thirtieth of a second">− 1/30s</button>
+    <button id="forward" type="button" aria-label="Forward one thirtieth of a second">+ 1/30s</button>
+    <button id="in" type="button">Set in</button>
+    <button id="out" type="button">Set out</button>
+    <span id="range" class="muted" aria-live="polite"></span>
+  </div>
+  <p class="muted" id="note"></p>
+  <fieldset><legend>Comment on this cut</legend>
+    <label for="text">Feedback</label><textarea id="text" maxlength="2000" placeholder="Describe the change"></textarea>
+    <button id="submit" type="button">Add comment</button>
+  </fieldset>
+</section>
+<aside><h2>Comments</h2><div id="comments" aria-live="polite"></div><p id="error" role="alert"></p></aside>
+</main>
+<script>
+const video=document.getElementById('video'),version=document.getElementById('version');
+let state, start=null, end=null;
+const el=id=>document.getElementById(id);
+const format=t=>Number(t).toFixed(2)+'s';
+function showRange(){el('range').textContent='In '+(start===null?'—':format(start))+' · Out '+(end===null?'—':format(end))}
+async function call(path,data){
+  const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result;
+}
+async function reload(){
+  const response=await fetch('/api/state');state=await response.json();
+  el('title').textContent=state.title;
+  const selected=Number(version.value)||state.versions.length;
+  version.replaceChildren();
+  state.versions.forEach(v=>{const option=document.createElement('option');option.value=v.number;option.textContent='v'+v.number;version.append(option)});
+  version.value=String(Math.min(selected,state.versions.length));
+  selectVersion();renderComments();
+}
+function selectVersion(){
+  const v=state.versions.find(x=>x.number===Number(version.value));
+  if(!v){el('note').textContent='Add a video from the CLI to start.';return}
+  video.src='/media/'+encodeURIComponent(v.file);
+  el('note').textContent='v'+v.number+' · '+v.note;
+  start=null;end=null;showRange();renderComments();
+}
+function renderComments(){
+  el('comments').replaceChildren();
+  if(!state)return;
+  state.comments.filter(c=>c.version===Number(version.value)).forEach(c=>{
+    const card=document.createElement('div');card.className='comment';
+    const jump=document.createElement('button');jump.type='button';
+    jump.textContent=format(c.start)+(c.end>c.start?'–'+format(c.end):'');
+    jump.onclick=()=>{video.currentTime=c.start;video.pause()};
+    const status=document.createElement('span');status.className='muted';status.textContent=' '+c.status+' · '+c.id;
+    const body=document.createElement('p');body.textContent=c.text;
+    const note=document.createElement('p');note.className='muted';note.textContent=c.note||'';
+    card.append(jump,status,body,note);el('comments').append(card);
+  });
+}
+version.onchange=selectVersion;
+el('back').onclick=()=>video.currentTime=Math.max(0,video.currentTime-1/30);
+el('forward').onclick=()=>video.currentTime=Math.min(video.duration||Infinity,video.currentTime+1/30);
+el('in').onclick=()=>{start=video.currentTime;showRange()};
+el('out').onclick=()=>{end=video.currentTime;showRange()};
+el('submit').onclick=async()=>{
+  try{
+    el('error').textContent='';
+    const a=start===null?video.currentTime:start,b=end===null?a:end;
+    await call('/api/comment',{version:Number(version.value),start:a,end:b,text:el('text').value});
+    el('text').value='';await reload();
+  }catch(e){el('error').textContent=e.message}
+};
+reload().catch(e=>el('error').textContent=e.message);
+</script>
+</html>
